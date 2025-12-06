@@ -3,8 +3,11 @@ import Foundation
 public struct MessagesClient: Sendable {
     private let httpClient: HTTPClient
 
+    public let batches: MessageBatchesClient
+
     init(httpClient: HTTPClient) {
         self.httpClient = httpClient
+        self.batches = MessageBatchesClient(httpClient: httpClient)
     }
 
     @discardableResult
@@ -23,6 +26,42 @@ public struct MessagesClient: Sendable {
             options: callOptions
         )
         return response.body
+    }
+
+    /// Streaming variant. Returns a MessageStream wrapping an AsyncThrowingStream of events.
+    public func stream(
+        _ params: MessageCreateParams,
+        options: RequestOptions = RequestOptions()
+    ) async throws -> MessageStream {
+        var streamParams = params
+        streamParams.stream = true
+
+        let (bytes, cancel) = try await httpClient.stream(
+            path: "/v1/messages",
+            body: streamParams,
+            options: options
+        )
+
+        let events = SSEDecoder.decodeLines(bytes: bytes).map(MessageStreamEvent.from)
+
+        let stream = AsyncThrowingStream<MessageStreamEvent, Error> { continuation in
+            let task = Task {
+                do {
+                    for try await payload in events {
+                        continuation.yield(payload)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+                cancel()
+            }
+        }
+
+        return MessageStream(stream: stream, cancel: cancel)
     }
 
     /// Convenience for apps expecting structured JSON in the message content.

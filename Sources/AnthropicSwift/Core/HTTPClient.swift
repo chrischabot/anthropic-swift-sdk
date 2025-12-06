@@ -151,6 +151,63 @@ actor HTTPClient {
         throw AnthropicError.maxRetriesExceeded(lastError: lastError)
     }
 
+    /// Open a streaming POST request (SSE). Returns async bytes and a cancel closure.
+    func stream<Request: Encodable>(
+        path: String,
+        method: HTTPMethod = .post,
+        query: [URLQueryItem]? = nil,
+        headers: [String: String] = [:],
+        body: Request,
+        options: RequestOptions = RequestOptions()
+    ) async throws -> (URLSession.AsyncBytes, @Sendable () -> Void) {
+        guard let apiKey = config.apiKey, !apiKey.isEmpty else {
+            throw AnthropicError.missingAPIKey
+        }
+
+        var components = URLComponents(url: config.baseURL, resolvingAgainstBaseURL: false)
+        let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
+        let basePath = components?.path ?? ""
+        components?.path = basePath + normalizedPath
+        if let query, !query.isEmpty {
+            components?.queryItems = query
+        }
+        guard let url = components?.url else {
+            throw AnthropicError.invalidURL
+        }
+
+        let mergedHeaders = mergeHeaders(requestHeaders: headers, optionHeaders: options.headers, apiKey: apiKey)
+
+        var request = URLRequest(url: url)
+        request.httpMethod = method.rawValue
+        for (key, value) in mergedHeaders {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        if let timeout = options.timeout ?? config.timeout {
+            request.timeoutInterval = timeout
+        }
+        do {
+            request.httpBody = try JSONCoding.encoder.encode(body)
+            if request.value(forHTTPHeaderField: "Content-Type") == nil {
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            }
+        } catch {
+            throw AnthropicError.encodingError(error)
+        }
+        if let idempotencyKey = options.idempotencyKey {
+            request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
+        }
+
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw AnthropicError.httpError(statusCode: status, message: "Stream open failed", requestID: nil)
+        }
+        let task = bytes.task
+        let cancel: @Sendable () -> Void = { task.cancel() }
+        return (bytes, cancel)
+    }
+
     func sendJSON<Response: Decodable & Sendable>(
         path: String,
         method: HTTPMethod = .get,

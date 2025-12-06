@@ -5,11 +5,13 @@ public actor AnthropicClient {
     private let httpClient: HTTPClient
 
     public let messages: MessagesClient
+    public let models: ModelsClient
 
     public init(configuration: ClientConfiguration) {
         self.configuration = configuration
         self.httpClient = HTTPClient(configuration: configuration)
         self.messages = MessagesClient(httpClient: httpClient)
+        self.models = ModelsClient(httpClient: httpClient)
     }
 
     public init(apiKey: String) {
@@ -17,5 +19,6 @@ public actor AnthropicClient {
         self.configuration = config
         self.httpClient = HTTPClient(configuration: config)
         self.messages = MessagesClient(httpClient: httpClient)
+        self.models = ModelsClient(httpClient: httpClient)
     }
 }
