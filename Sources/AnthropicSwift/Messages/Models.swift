@@ -28,6 +28,18 @@ public struct MessageCreateParams: Encodable, Sendable {
     }
 }
 
+public struct MessageCountTokensParams: Encodable, Sendable {
+    public var model: String
+    public var messages: [MessageInput]
+    public var system: [MessageInput]?
+
+    public init(model: String, messages: [MessageInput], system: [MessageInput]? = nil) {
+        self.model = model
+        self.messages = messages
+        self.system = system
+    }
+}
+
 public struct MessageInput: Codable, Sendable {
     public var role: String
     public var content: [ContentBlock]
@@ -82,4 +94,14 @@ public struct MessageResponse: Codable, Sendable {
 public struct Usage: Codable, Sendable {
     public let inputTokens: Int?
     public let outputTokens: Int?
+}
+
+public struct MessageTokenCountResponse: Codable, Sendable {
+    public let inputTokens: Int
+    public let cacheCreation: CacheCreation?
+}
+
+public struct CacheCreation: Codable, Sendable {
+    public let ephemeral1hInputTokens: Int?
+    public let ephemeral5mInputTokens: Int?
 }

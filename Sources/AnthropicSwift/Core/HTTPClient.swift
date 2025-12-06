@@ -1,5 +1,7 @@
 import Foundation
 
+private struct EmptyBody: Encodable, Sendable {}
+
 public struct APIResponse<Body: Decodable & Sendable>: Sendable {
     public let body: Body
     public let statusCode: Int
@@ -46,7 +48,7 @@ actor HTTPClient {
         self.session = URLSession(configuration: urlConfig)
     }
 
-    func sendJSON<Request: Encodable, Response: Decodable>(
+    func sendJSON<Request: Encodable, Response: Decodable & Sendable>(
         path: String,
         method: HTTPMethod = .post,
         query: [URLQueryItem]? = nil,
@@ -147,6 +149,23 @@ actor HTTPClient {
         }
 
         throw AnthropicError.maxRetriesExceeded(lastError: lastError)
+    }
+
+    func sendJSON<Response: Decodable & Sendable>(
+        path: String,
+        method: HTTPMethod = .get,
+        query: [URLQueryItem]? = nil,
+        headers: [String: String] = [:],
+        options: RequestOptions = RequestOptions()
+    ) async throws -> APIResponse<Response> {
+        return try await sendJSON(
+            path: path,
+            method: method,
+            query: query,
+            headers: headers,
+            body: Optional<EmptyBody>.none,
+            options: options
+        )
     }
 
     private func mergeHeaders(requestHeaders: [String: String], optionHeaders: [String: String], apiKey: String) -> [String: String] {
