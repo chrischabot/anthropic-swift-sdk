@@ -37,9 +37,11 @@ public struct RequestOptions: Sendable {
 actor HTTPClient {
     private let config: ClientConfiguration
     private let session: URLSession
+    private let logger: Logger
 
     init(configuration: ClientConfiguration) {
         self.config = configuration
+        self.logger = configuration.logger ?? DefaultLogger()
 
         let urlConfig = URLSessionConfiguration.ephemeral
         // Use caller-specified timeout if present; otherwise rely on per-request.
@@ -102,6 +104,7 @@ actor HTTPClient {
 
         while attempt <= maxRetries {
             do {
+                log(.debug, "Request \(method.rawValue) \(url.absoluteString)")
                 let (data, response) = try await session.data(for: request)
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw AnthropicError.invalidURL
@@ -111,6 +114,7 @@ actor HTTPClient {
                 let requestID = httpResponse.value(forHTTPHeaderField: "request-id")
 
                 if (200...299).contains(status) {
+                    log(.debug, "Response \(status) request-id=\(requestID ?? "n/a")")
                     do {
                         let decoded = try JSONCoding.decoder.decode(Response.self, from: data)
                         return APIResponse(body: decoded, statusCode: status, requestID: requestID, headers: headers)
@@ -119,6 +123,7 @@ actor HTTPClient {
                     }
                 } else {
                     let message = Self.extractErrorMessage(from: data) ?? HTTPURLResponse.localizedString(forStatusCode: status)
+                    log(.warn, "HTTP \(status) request-id=\(requestID ?? "n/a"): \(message)")
                     throw AnthropicError.httpError(statusCode: status, message: message, requestID: requestID)
                 }
             } catch {
@@ -203,9 +208,122 @@ actor HTTPClient {
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             throw AnthropicError.httpError(statusCode: status, message: "Stream open failed", requestID: nil)
         }
+        log(.debug, "Stream opened \(method.rawValue) \(url.absoluteString)")
         let task = bytes.task
         let cancel: @Sendable () -> Void = { task.cancel() }
         return (bytes, cancel)
+    }
+
+    func sendRaw<Response: Decodable & Sendable>(
+        path: String,
+        method: HTTPMethod = .post,
+        query: [URLQueryItem]? = nil,
+        headers: [String: String] = [:],
+        body: Data,
+        options: RequestOptions = RequestOptions()
+    ) async throws -> APIResponse<Response> {
+        guard let apiKey = config.apiKey, !apiKey.isEmpty else {
+            throw AnthropicError.missingAPIKey
+        }
+
+        var components = URLComponents(url: config.baseURL, resolvingAgainstBaseURL: false)
+        let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
+        let basePath = components?.path ?? ""
+        components?.path = basePath + normalizedPath
+        if let query, !query.isEmpty {
+            components?.queryItems = query
+        }
+        guard let url = components?.url else {
+            throw AnthropicError.invalidURL
+        }
+
+        let mergedHeaders = mergeHeaders(requestHeaders: headers, optionHeaders: options.headers, apiKey: apiKey)
+
+        var request = URLRequest(url: url)
+        request.httpMethod = method.rawValue
+        for (key, value) in mergedHeaders {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        if let timeout = options.timeout ?? config.timeout {
+            request.timeoutInterval = timeout
+        }
+        request.httpBody = body
+
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AnthropicError.invalidURL
+        }
+        let status = httpResponse.statusCode
+        let headersOut = Self.normalizeHeaders(httpResponse.allHeaderFields)
+        let requestID = httpResponse.value(forHTTPHeaderField: "request-id")
+
+        if (200...299).contains(status) {
+            log(.debug, "Response \(status) request-id=\(requestID ?? "n/a")")
+            let decoded = try JSONCoding.decoder.decode(Response.self, from: data)
+            return APIResponse(body: decoded, statusCode: status, requestID: requestID, headers: headersOut)
+        } else {
+            let message = Self.extractErrorMessage(from: data) ?? HTTPURLResponse.localizedString(forStatusCode: status)
+            log(.warn, "HTTP \(status) request-id=\(requestID ?? "n/a"): \(message)")
+            throw AnthropicError.httpError(statusCode: status, message: message, requestID: requestID)
+        }
+    }
+
+    func download(
+        path: String,
+        headers: [String: String],
+        options: RequestOptions = RequestOptions()
+    ) async throws -> Data {
+        guard let apiKey = config.apiKey, !apiKey.isEmpty else {
+            throw AnthropicError.missingAPIKey
+        }
+
+        var components = URLComponents(url: config.baseURL, resolvingAgainstBaseURL: false)
+        let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
+        let basePath = components?.path ?? ""
+        components?.path = basePath + normalizedPath
+        guard let url = components?.url else {
+            throw AnthropicError.invalidURL
+        }
+
+        let mergedHeaders = mergeHeaders(requestHeaders: headers, optionHeaders: options.headers, apiKey: apiKey)
+
+        var request = URLRequest(url: url)
+        request.httpMethod = HTTPMethod.get.rawValue
+        for (key, value) in mergedHeaders {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        if let timeout = options.timeout ?? config.timeout {
+            request.timeoutInterval = timeout
+        }
+
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AnthropicError.invalidURL
+        }
+        let status = httpResponse.statusCode
+        if (200...299).contains(status) {
+            return data
+        } else {
+            let message = Self.extractErrorMessage(from: data) ?? HTTPURLResponse.localizedString(forStatusCode: status)
+            throw AnthropicError.httpError(statusCode: status, message: message, requestID: httpResponse.value(forHTTPHeaderField: "request-id"))
+        }
+    }
+
+    private func log(_ level: LogLevel, _ message: String) {
+        guard shouldLog(level) else { return }
+        logger.log(level: level, message: message)
+    }
+
+    private func shouldLog(_ level: LogLevel) -> Bool {
+        switch (config.logLevel, level) {
+        case (.off, _): return false
+        case (.error, .error): return true
+        case (.warn, .error), (.warn, .warn): return true
+        case (.info, .error), (.info, .warn), (.info, .info): return true
+        case (.debug, _): return true
+        default:
+            return false
+        }
     }
 
     func sendJSON<Response: Decodable & Sendable>(

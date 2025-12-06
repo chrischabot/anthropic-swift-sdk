@@ -41,6 +41,13 @@ public struct MessageStream: Sendable {
             usage: usage
         )
     }
+
+    /// Convenience: process each event with a handler.
+    public func forEach(_ handler: @escaping @Sendable (MessageStreamEvent) -> Void) async throws {
+        for try await event in stream {
+            handler(event)
+        }
+    }
 }
 
 public struct StreamPayloadPublic: Sendable {

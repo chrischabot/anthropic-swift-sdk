@@ -9,6 +9,7 @@ public struct ClientConfiguration: Sendable {
     public var timeout: TimeInterval?
     public var maxRetries: Int
     public var logLevel: LogLevel
+    public var logger: Logger?
 
     public init(
         apiKey: String? = nil,
@@ -18,7 +19,8 @@ public struct ClientConfiguration: Sendable {
         betaHeaders: [String] = [],
         timeout: TimeInterval? = nil,
         maxRetries: Int = 2,
-        logLevel: LogLevel = .off
+        logLevel: LogLevel = .off,
+        logger: Logger? = nil
     ) {
         self.apiKey = apiKey
         self.baseURL = baseURL
@@ -28,6 +30,7 @@ public struct ClientConfiguration: Sendable {
         self.timeout = timeout
         self.maxRetries = maxRetries
         self.logLevel = logLevel
+        self.logger = logger
     }
 }
 

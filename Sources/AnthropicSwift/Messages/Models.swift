@@ -8,6 +8,8 @@ public struct MessageCreateParams: Encodable, Sendable {
     public var stream: Bool?
     public var metadata: [String: String]?
     public var temperature: Double?
+    public var tools: [ToolDefinition]?
+    public var toolChoice: ToolChoice?
 
     public init(
         model: String,
@@ -16,7 +18,9 @@ public struct MessageCreateParams: Encodable, Sendable {
         messages: [MessageInput],
         stream: Bool? = nil,
         metadata: [String: String]? = nil,
-        temperature: Double? = nil
+        temperature: Double? = nil,
+        tools: [ToolDefinition]? = nil,
+        toolChoice: ToolChoice? = nil
     ) {
         self.model = model
         self.maxTokens = maxTokens
@@ -25,6 +29,8 @@ public struct MessageCreateParams: Encodable, Sendable {
         self.stream = stream
         self.metadata = metadata
         self.temperature = temperature
+        self.tools = tools
+        self.toolChoice = toolChoice
     }
 }
 
@@ -65,6 +71,9 @@ public struct MessageInput: Codable, Sendable {
 public struct ContentBlock: Codable, Sendable {
     public var type: String
     public var text: String?
+    public var name: String?
+    public var input: [String: AnyCodable]?
+    public var toolUseId: String?
 
     public init(type: String, text: String? = nil) {
         self.type = type
@@ -74,6 +83,17 @@ public struct ContentBlock: Codable, Sendable {
     public static func text(_ text: String) -> ContentBlock {
         ContentBlock(type: "text", text: text)
     }
+
+    public var toolUse: ToolUseBlock? {
+        guard type == "tool_use", let name, let toolUseId, let input else { return nil }
+        return ToolUseBlock(id: toolUseId, name: name, input: input)
+    }
+}
+
+public struct ToolUseBlock: Sendable {
+    public let id: String
+    public let name: String
+    public let input: [String: AnyCodable]
 }
 
 public struct MessageResponse: Codable, Sendable {
@@ -104,4 +124,37 @@ public struct MessageTokenCountResponse: Codable, Sendable {
 public struct CacheCreation: Codable, Sendable {
     public let ephemeral1hInputTokens: Int?
     public let ephemeral5mInputTokens: Int?
+}
+
+public struct ToolDefinition: Codable, Sendable {
+    public var name: String
+    public var description: String?
+    public var inputSchema: [String: AnyCodable]
+    public var type: String = "function"
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case description
+        case inputSchema = "input_schema"
+        case type
+    }
+
+    public init(name: String, description: String? = nil, inputSchema: [String: AnyCodable]) {
+        self.name = name
+        self.description = description
+        self.inputSchema = inputSchema
+    }
+}
+
+public struct ToolChoice: Codable, Sendable {
+    public var type: String
+    public var name: String?
+
+    public static func required(name: String) -> ToolChoice {
+        ToolChoice(type: "tool", name: name)
+    }
+
+    public static func auto() -> ToolChoice {
+        ToolChoice(type: "auto", name: nil)
+    }
 }
