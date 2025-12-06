@@ -214,6 +214,32 @@ actor HTTPClient {
         return (bytes, cancel)
     }
 
+    func streamURL(
+        urlString: String,
+        headers: [String: String] = [:],
+        options: RequestOptions = RequestOptions()
+    ) async throws -> (URLSession.AsyncBytes, @Sendable () -> Void) {
+        guard let url = URL(string: urlString) else {
+            throw AnthropicError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = HTTPMethod.get.rawValue
+        for (k, v) in headers {
+            request.setValue(v, forHTTPHeaderField: k)
+        }
+        if let timeout = options.timeout ?? config.timeout {
+            request.timeoutInterval = timeout
+        }
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw AnthropicError.httpError(statusCode: status, message: "Stream open failed", requestID: nil)
+        }
+        let task = bytes.task
+        let cancel: @Sendable () -> Void = { task.cancel() }
+        return (bytes, cancel)
+    }
+
     func sendRaw<Response: Decodable & Sendable>(
         path: String,
         method: HTTPMethod = .post,

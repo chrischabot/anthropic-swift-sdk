@@ -60,6 +60,7 @@ public struct BetaFilesClient: Sendable {
     ) async throws -> Data {
         var headers = options.headers
         headers["anthropic-beta"] = ([filesBeta] + betas).joined(separator: ",")
+        headers["Accept"] = "application/binary"
         var callOptions = options
         callOptions.headers = headers
 

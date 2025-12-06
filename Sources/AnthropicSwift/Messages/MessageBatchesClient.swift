@@ -46,6 +46,42 @@ public struct MessageBatchesClient: Sendable {
         return response.body
     }
 
+    /// Stream results of a completed batch as JSONL lines.
+    public func results(
+        id: String,
+        options: RequestOptions = RequestOptions()
+    ) async throws -> AsyncThrowingStream<MessageBatchResultLine, Error> {
+        let batch = try await retrieve(id: id, options: options)
+        guard let resultsURL = batch.resultsUrl else {
+            throw AnthropicError.httpError(statusCode: 409, message: "Batch not finished; no results_url yet", requestID: nil)
+        }
+
+        let (bytes, cancel) = try await httpClient.streamURL(
+            urlString: resultsURL,
+            headers: ["Accept": "application/binary"],
+            options: options
+        )
+
+        let lines = JSONLDecoder.decodeLines(bytes: bytes, as: MessageBatchResultLine.self)
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await line in lines {
+                        continuation.yield(line)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+                cancel()
+            }
+        }
+    }
+
     public func list(
         limit: Int? = nil,
         after: String? = nil,
@@ -98,6 +134,8 @@ public struct MessageBatch: Codable, Sendable {
     public let processingStatus: String
     public let requestCounts: MessageBatchRequestCounts?
     public let createdAt: Date?
+    public let endedAt: Date?
+    public let resultsUrl: String?
 }
 
 public struct MessageBatchRequestCounts: Codable, Sendable {
@@ -105,4 +143,20 @@ public struct MessageBatchRequestCounts: Codable, Sendable {
     public let succeeded: Int?
     public let errored: Int?
     public let canceled: Int?
+}
+
+public struct MessageBatchResultLine: Decodable, Sendable {
+    public let customId: String
+    public let result: MessageBatchResult
+}
+
+public struct MessageBatchResult: Decodable, Sendable {
+    public let type: String
+    public let message: MessageResponse?
+    public let error: BatchErrorResponse?
+}
+
+public struct BatchErrorResponse: Decodable, Sendable {
+    public let type: String?
+    public let message: String?
 }
